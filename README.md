@@ -1,36 +1,156 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 積読 (仮称) — 読み終えた本が積み上がる読書管理アプリ
 
-## Getting Started
+読破するたびに、ホーム画面に本が一冊ずつ平積みされていく読書管理アプリ。
+冊数が増えるほど背景が変化し、視界が広がっていく体験を目指す。
 
-First, run the development server:
+## 開発状況
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+現在: **Step 1 — プロジェクト初期化**
+
+| Step | 内容 | 状態 |
+|------|------|------|
+| 1 | Next.js プロジェクト初期化 | 完了 |
+| 2 | Docker Compose で MySQL 起動 | |
+| 3 | Prisma でスキーマ定義 | |
+| 4 | 本の CRUD | |
+| 5 | Google Books 連携 | |
+| 6 | 積み上げ描画 | |
+| 7 | 認証 | |
+| 8 | 単体テスト | |
+| 9 | CI/CD | |
+| 10 | デプロイ | |
+
+## 技術構成
+
+| レイヤー | 技術 |
+|---|---|
+| フレームワーク | Next.js 16 (App Router) |
+| 言語 | TypeScript |
+| スタイル | Tailwind CSS |
+| ORM | Prisma |
+| データベース | MySQL 8 |
+| テスト | Vitest |
+| 実行環境 | Docker / Docker Compose |
+| CI | GitHub Actions |
+
+## アーキテクチャ
+
+```
+ブラウザ
+   ↓
+Next.js (App Router)  :3000
+   ├─ src/app/          画面 (Server Components)
+   ├─ src/app/api/      JSON API (Route Handlers)
+   ├─ src/server/       ビジネスロジック ★ Next.js に依存しない
+   └─ src/lib/          汎用処理 (ISBN 正規化など)
+   ↓
+MySQL                 :3306
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 構成の判断について
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+個人開発の速度を優先し、Next.js 単体構成を採用した。
+Server Components により API 層のボイラープレートを書かずにデータ取得ができ、
+型がフロントとサーバーで共有されるため、開発速度が大きく変わる。
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+一方で「フロントエンドとバックエンドの分離」というモダンな構成要件とは
+トレードオフの関係にあるため、以下の2点で将来の分離可能性を確保している。
 
-## Learn More
+1. **`src/server/` は Next.js の API を import しない。**
+   ビジネスロジックが純粋な TypeScript のため、別サービスへ移設できる。
+2. **データ取得は Server Components、更新系は Route Handlers で JSON API として公開する。**
+   HTTP 経由で叩ける API が実在するため、別クライアントからも利用できる。
 
-To learn more about Next.js, take a look at the following resources:
+トラフィックやクライアントの増加により分離が必要になった時点で、
+画面側の変更を最小限に切り出せる構造としている。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 技術検証の記録
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+実装前に、書誌データ API の実データを調査した。
+**ドキュメントや技術記事の記述と、実際のレスポンスは一致しないことが多い。**
 
-## Deploy on Vercel
+### 1. openBD のページ数取得率は約11%
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+18冊の ISBN で実測した結果、ページ数 (`Extent`) を保持していたのは2冊のみ。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+openBD のレコードには2種類ある。
+
+| | 出版社型 | 図書館型 |
+|---|---|---|
+| `ContributorRole` | `["A01"]` | `[]` (空) |
+| 著者名の形式 | `郭 四志` | `夏目, 漱石, 1867-1916` |
+| `Extent` (ページ数) | 高確率で存在 | **1件も存在しない** |
+| 該当数 | 3冊 | 15冊 |
+
+参考にした技術記事 (2019年) にはページ数が取得できると書かれていたが、
+**記事が例示していた ISBN を現在叩くと、レコード自体が出版社型から図書館型に置き換わっており、ページ数が消えていた。**
+
+### 2. Google Books API はキーが必須
+
+API キーなしのリクエストは全匿名利用者で枠を共有しており、常時 429 (`quota_limit_value: "0"`) が返る。
+キーを取得すると 1日1,000 リクエストまで利用可能。
+
+キーは秘密情報のためクライアント側に置けない。
+サーバーサイドでのみ外部 API を呼び出す構成としている。
+
+### 3. `pageCount` は欠損より「不正な値」に注意
+
+新潮文庫『ペスト』(実際は476ページ) は `pageCount: 0` を返す。
+フィールドが存在しないのではなく、**0 が入っている**。
+
+```ts
+// NG: ?? は null / undefined しか拾わないため 0 が素通りする
+pageCount: info.pageCount ?? null
+
+// OK: 欠損と不正値の両方を null に寄せる
+const raw = info.pageCount;
+const pageCount = typeof raw === "number" && raw > 0 ? raw : null;
+```
+
+また、電子書籍版のレコード (`isEbook: true`) は紙のページ数と乖離する。
+同じ『日の名残り』でも、紙のみの中公文庫版は `366`、電子版のあるハヤカワepi文庫版は `178` を返した (Web 表示は 365)。
+
+### 4. 2つの API は上流を共有している
+
+Google は公式に、書誌データの提供元として**国立国会図書館**を挙げている。
+openBD の図書館型レコードも同系統と考えられる。
+
+つまり **openBD と Google Books は独立した情報源ではなく、同じ欠損を持つ。**
+実際、新潮文庫『ペスト』は両方で取得に失敗した。
+
+書誌データには2つの流儀がある。
+
+| | MARC (図書館) | ONIX (出版流通) |
+|---|---|---|
+| 目的 | 資料を特定する | 商品を売る |
+| ページ数 | `476p ; 16cm` (自由記述) | `ExtentValue: 476` (構造化) |
+
+MARC 側もページ数を持つが構造化されていないため、変換過程で失われやすい。
+
+### 設計への反映
+
+上記より、**ページ数の自動取得を前提にしない設計**とする。
+
+- 本の厚みはデフォルト値で描画し、ユーザーが後から調整できる
+- ページ数が取得できた場合のみ初期値として利用する
+- **データが取得できないことを理由に、本を登録できない状態を作らない**
+
+## セットアップ
+
+```bash
+# 依存をインストール
+npm install
+
+# 環境変数を用意する
+cp .env.example .env
+# .env を開いて各値を設定する
+
+# 開発サーバーを起動
+npm run dev
+```
+
+http://localhost:3000 を開く。
+
+## ライセンス
+
+未定

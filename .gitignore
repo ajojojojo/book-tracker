@@ -31,7 +31,11 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
+# APIキーなどの秘密情報。絶対にコミットしないこと
 .env*
+
+# ただし .env.example は「どんな変数が必要か」を示す見本なので追跡する
+!.env.example
 
 # vercel
 .vercel

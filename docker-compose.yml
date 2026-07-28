@@ -1,0 +1,58 @@
+# ローカル開発用の MySQL を立ち上げる設定。
+#
+#   docker compose up -d     起動 (-d はバックグラウンド実行)
+#   docker compose ps        状態を確認
+#   docker compose logs db   ログを見る
+#   docker compose down      停止 (データは残る)
+#
+# ここに書かれているパスワードはローカル開発専用。
+# 本番環境では環境変数から注入するため、この値は使わない。
+
+services:
+  db:
+    # Docker Hub から取得するイメージ。8.4 は現行の LTS 版
+    image: mysql:8.4
+
+    # コンテナに付ける名前。docker ps で見やすくなる
+    container_name: book-tracker-db
+
+    # Docker Desktop 再起動時に自動で立ち上げ直す
+    # (手動で down した場合は起動しない)
+    restart: unless-stopped
+
+    # MySQL イメージが初回起動時に読む設定。
+    # これらを渡すだけでデータベースとユーザーが自動作成される
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: book_tracker
+      MYSQL_USER: bookuser
+      MYSQL_PASSWORD: bookpass
+
+    # "Mac側のポート:コンテナ側のポート"
+    # これで Mac から localhost:3306 で接続できるようになる
+    ports:
+      - "3306:3306"
+
+    volumes:
+      # コンテナを削除してもデータが消えないよう、
+      # MySQL のデータ領域を名前付きボリュームに逃がす
+      - db-data:/var/lib/mysql
+
+      # このディレクトリに置いた .sql / .sh は、
+      # データ領域が空の状態で起動したときに一度だけ自動実行される。
+      # (ボリュームが既に存在する場合は実行されない)
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+
+    # MySQL が「起動した」と「接続を受け付けられる」は別物。
+    # 実際に応答するまでを監視する
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+# 名前付きボリュームの宣言。
+# 実体は Docker が管理する領域にあり、プロジェクトフォルダには作られない
+volumes:
+  db-data:

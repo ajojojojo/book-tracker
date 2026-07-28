@@ -1,0 +1,118 @@
+// Prisma のスキーマ定義。
+// ここを書き換えて `npx prisma migrate dev` を実行すると、
+// MySQL のテーブルが自動で作られる。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 から、接続 URL はこのファイルではなく
+// プロジェクト直下の prisma.config.ts に書く仕様に変わった
+datasource db {
+  provider = "mysql"
+}
+
+// ============================================
+// ユーザー
+// ============================================
+model User {
+  id String @id @default(cuid())
+
+  email String @unique @db.VarChar(255)
+
+  // パスワードは平文で保存しない。ハッシュ化した文字列のみを持つ
+  passwordHash String @map("password_hash") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  readingLogs ReadingLog[]
+
+  @@map("users")
+}
+
+// ============================================
+// 書籍のマスタデータ
+//
+// 外部 API から取得した書誌情報のキャッシュ。全ユーザーで共有する。
+// 同じ本を 100 人が登録しても、この行は 1 つで済む。
+//
+// 主キーではなく isbn13 に一意制約を張ることで、
+// 「同じ作品でも版が違えば別の本」を自然に表現できる。
+// (中公文庫版とハヤカワepi文庫版の『日の名残り』は別レコードになる)
+// ============================================
+model Book {
+  id String @id @default(cuid())
+
+  // ISBN は必ず 13 桁に正規化してから保存する (src/lib/isbn.ts)
+  // 先頭の 0 が消えないよう、数値型ではなく固定長文字列を使う
+  isbn13 String @unique @db.Char(13)
+
+  title String @db.VarChar(500)
+
+  // 以下は外部 API で欠損しうるため、すべて nullable にしている。
+  // 検証の結果、著者・出版社・ページ数・書影はいずれも欠けることが確認できた
+  author        String? @db.VarChar(500)
+  publisher     String? @db.VarChar(255)
+  publishedYear Int?    @map("published_year")
+
+  // Google Books は pageCount に 0 を返すことがある。
+  // 0 は不正値として扱い、null に寄せてから保存する
+  pageCount Int? @map("page_count")
+
+  coverUrl String? @map("cover_url") @db.VarChar(1000)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  readingLogs ReadingLog[]
+
+  @@map("books")
+}
+
+enum ReadingStatus {
+  WANT_TO_READ // 積読
+  READING // 読んでいる
+  FINISHED // 読了
+}
+
+// ============================================
+// 読書記録
+//
+// 「誰が」「どの本を」「どう読んだか」。
+// users と books を結ぶ中間テーブルでもある。
+// ============================================
+model ReadingLog {
+  id String @id @default(cuid())
+
+  userId String @map("user_id")
+  bookId String @map("book_id")
+
+  status ReadingStatus @default(WANT_TO_READ)
+
+  startedAt  DateTime? @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+
+  rating Int?
+  memo   String? @db.Text
+
+  // 積み上げ表示の厚み (px)。
+  // 通常は books.pageCount から算出するが、
+  // 取得できない・値が誤っている場合にユーザーが上書きできる。
+  //
+  // 厚みは「その人が読んだ本」の属性なので books ではなくこちらに持つ。
+  // books に持たせると、一人の調整が全ユーザーに波及してしまう
+  thicknessOverride Int? @map("thickness_override")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book Book @relation(fields: [bookId], references: [id], onDelete: Restrict)
+
+  // 同じユーザーが同じ本を重複登録できないようにする
+  @@unique([userId, bookId])
+  // 「自分の読了済みの本」を引く問い合わせが最も多いため索引を張る
+  @@index([userId, status])
+  @@map("reading_logs")
+}

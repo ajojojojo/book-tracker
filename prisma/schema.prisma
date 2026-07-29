@@ -2,8 +2,12 @@
 // ここを書き換えて `npx prisma migrate dev` を実行すると、
 // MySQL のテーブルが自動で作られる。
 
+// Prisma 7 の生成方式。
+// スキーマから TypeScript のクライアントコードを output の場所に書き出す。
+// パスは このファイル(prisma/schema.prisma) からの相対指定
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
 // Prisma 7 から、接続 URL はこのファイルではなく

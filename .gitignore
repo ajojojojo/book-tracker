@@ -43,3 +43,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# prisma が schema.prisma から自動生成するコード。
+# 中身はスキーマから常に再現できるためコミットしない
+# (npm install 時に postinstall で自動生成される)
+/src/generated
